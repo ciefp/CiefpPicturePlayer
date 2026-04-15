@@ -149,39 +149,18 @@ rm -rf $TMPPATH
 sync
 
 echo ""
-echo "============================================================"
-echo "[OK] CiefpPicturePlayer v$version INSTALLED SUCCESSFULLY"
-echo "============================================================"
-echo ""
-echo "  Features:"
-echo "  - Local pictures (HDD/USB)"
-echo "  - Network pictures (SMB shares)"
-echo "  - Online pictures (GitHub .tv files)"
-echo "  - Fullscreen with slideshow"
-echo "  - Aspect ratio preserved"
-echo ""
-echo "  How to use:"
-echo "  - GREEN button: Open local folder"
-echo "  - YELLOW button: Network (SMB) shares"
-echo "  - BLUE button: Online content"
-echo "  - MENU button: Settings (clear cache)"
-echo ""
-echo "  developed by ciefp"
-echo "  https://github.com/ciefp"
-echo "   .::CiefpSettings::. 
-echo "============================================================"
-echo ""
+echo "#########################################################"
+echo "#           CiefpKingSat INSTALLED SUCCESSFULLY         #"
+echo "#                  developed by ciefp                   #"
+echo "#                  .::CiefpSettings::.                  #"
+echo "#               https://github.com/ciefp                #"
+echo "#########################################################"
 
-# Only restart if SKIP_REBOOT is not set to 1
+# REBOOT LOGIKA (Poštuje tvoj SKIP_REBOOT flag)
 if [ "$SKIP_REBOOT" = "0" ]; then
-    echo "[RESTART] Your device will RESTART in 5 seconds..."
-    echo "============================================================"
-    sleep 5
+    echo "#           Your device will RESTART Now                #"
+    sleep 3
     killall -9 enigma2
 else
-    echo "[INFO] Restart skipped (batch installation)"
-    echo "       Please restart Enigma2 manually to use the plugin."
-    echo "============================================================"
+    echo "#           Installation finished (No Reboot)           #"
 fi
-
-exit 0
