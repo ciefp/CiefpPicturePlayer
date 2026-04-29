@@ -150,7 +150,7 @@ sync
 
 echo ""
 echo "#########################################################"
-echo "#           CiefpKingSat INSTALLED SUCCESSFULLY         #"
+echo "#     CiefpPicturePlayer INSTALLED SUCCESSFULLY         #"
 echo "#                  developed by ciefp                   #"
 echo "#                  .::CiefpSettings::.                  #"
 echo "#               https://github.com/ciefp                #"
