@@ -8,7 +8,17 @@ import urllib.parse
 import time
 import threading
 import socket
+from ftplib import FTP
 from enigma import ePicLoad
+from Components.config import config, ConfigSelection, ConfigSubsection, getConfigListEntry
+config.plugins.ciefpPicturePlayer = ConfigSubsection()
+config.plugins.ciefpPicturePlayer.auto_clear_cache = ConfigSelection(default="500", choices=[
+    ("0", "Disabled"),
+    ("100", "100 MB"),
+    ("500", "500 MB"),
+    ("1000", "1 GB"),
+    ("2000", "2 GB")
+])
 from Components.ActionMap import ActionMap
 from Components.Label import Label
 from Components.Sources.List import List
@@ -24,7 +34,7 @@ from urllib.parse import unquote
 
 PLUGIN_NAME = "CiefpPicturePlayer"
 PLUGIN_DESC = "Picture viewer with local, network and online support"
-PLUGIN_VERSION = "1.0"
+PLUGIN_VERSION = "1.1"
 PLUGIN_DIR = os.path.dirname(__file__) or "/usr/lib/enigma2/python/Plugins/Extensions/CiefpPicturePlayer"
 
 # Mrežni mount point
@@ -38,6 +48,30 @@ GITHUB_TV_URL = "https://api.github.com/repos/ciefp/CiefpVibesFiles/contents/Pic
 CACHE_DIR = "/tmp/ciefppicture_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+def checkAndClearCache():
+    limit_mb = int(config.plugins.ciefpPicturePlayer.auto_clear_cache.value)
+    if limit_mb == 0:
+        return
+
+    if os.path.exists(CACHE_DIR):
+        try:
+            total_size = 0
+            for f in os.listdir(CACHE_DIR):
+                fp = os.path.join(CACHE_DIR, f)
+                if os.path.isfile(fp):
+                    total_size += os.path.getsize(fp)
+
+            if (total_size / (1024 * 1024)) > limit_mb:
+                for f in os.listdir(CACHE_DIR):
+                    file_path = os.path.join(CACHE_DIR, f)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.unlink(file_path)
+                    except:
+                        pass
+                print("[CiefpPicturePlayer] Cache auto-cleared at {}MB".format(limit_mb))
+        except:
+            pass
 
 class CiefpPicturePlayer(Screen):
     """Glavni ekran za pregled slika"""
@@ -172,6 +206,8 @@ class CiefpPicturePlayer(Screen):
             list=[
                 ("🗑️ Clear Image Cache", "clear_cache"),
                 ("ℹ️ Cache Info", "cache_info"),
+                ("⚙️ Set Auto-Limit: {} MB".format(config.plugins.ciefpPicturePlayer.auto_clear_cache.value),
+                 "set_limit"),
                 ("🌐 Language / Jezik", "language"),
                 ("🎨 Theme / Tema", "theme"),
             ]
@@ -186,6 +222,8 @@ class CiefpPicturePlayer(Screen):
             self.confirmClearCache()
         elif action == "cache_info":
             self.showCacheInfo()
+        elif action == "set_limit":
+            self.changeCacheLimit()
         elif action == "language":
             self.showLanguageMenu()
         elif action == "theme":
@@ -217,13 +255,19 @@ class CiefpPicturePlayer(Screen):
             file_count = 0
         cache_size = self.getCacheSize()
 
-        info = f"📁 Cache folder: {CACHE_DIR}\n"
-        info += f"📄 Files: {file_count}\n"
-        info += f"💾 Size: {cache_size} MB\n\n"
-        info += f"🗑️ Cache is cleared automatically when Enigma2 restarts.\n"
-        info += f"🌐 Online images are cached for faster viewing."
+        info = "📁 Cache folder: {}\n".format(CACHE_DIR)
+        info += "📄 Files: {}\n".format(file_count)
+        info += "💾 Size: {} MB\n\n".format(cache_size)
 
-        self.session.open(MessageBox, info, MessageBox.TYPE_INFO, timeout=5)
+        # DODATO UPOZORENJE
+        if cache_size > 400:
+            info += "⚠️ WARNING: Cache is getting full!\n"
+            info += "Slideshow might freeze if memory runs out.\n\n"
+
+        info += "🗑️ Cache is cleared automatically when Enigma2 restarts.\n"
+        info += "🌐 Online and Phone images are cached for faster viewing."
+
+        self.session.open(MessageBox, info, MessageBox.TYPE_INFO, timeout=10)
 
     def showLanguageMenu(self):
         """Meni za izbor jezika (placeholder - možeš proširiti)"""
@@ -265,6 +309,30 @@ class CiefpPicturePlayer(Screen):
             # Ovde dodaj logiku za promenu teme
             self.session.open(MessageBox, f"🎨 Theme changed to: {choice[0]}\n\n(Restart plugin to apply changes)",
                               MessageBox.TYPE_INFO, timeout=2)
+
+    def changeCacheLimit(self):
+        # Ručno definišemo listu opcija koju smo postavili u config-u
+        cache_options = [
+            ("0", "Disabled"),
+            ("100", "100 MB"),
+            ("500", "500 MB"),
+            ("1000", "1 GB"),
+            ("2000", "2 GB")
+        ]
+
+        self.session.openWithCallback(
+            self.limitChanged,
+            ChoiceBox,
+            title="Select Cache Limit",
+            list=cache_options
+        )
+
+    def limitChanged(self, choice):
+        if choice:
+            config.plugins.ciefpPicturePlayer.auto_clear_cache.value = choice[0]
+            config.plugins.ciefpPicturePlayer.save()
+            self.session.open(MessageBox, "Auto-clear limit set to: {} MB".format(choice[0]), MessageBox.TYPE_INFO,
+                              timeout=2)
 
     def up(self):
         self["content_list"].selectPrevious()
@@ -315,42 +383,58 @@ class CiefpPicturePlayer(Screen):
             self["preview"].show()
 
     def updatePreview(self):
+        checkAndClearCache() # DODATO
         idx = self["content_list"].index
         if 0 <= idx < len(self.content_items):
             item = self.content_items[idx]
             if item["type"] == "image":
-                image_path = item["path"]
+                # Definisanje varijable na samom početku
+                image_path = item.get("path", "")
 
-                # Ako je URL → skini ga
-                if image_path.startswith("http"):
+                # Provera da li putanja uopšte postoji
+                if not image_path:
+                    self["preview"].hide()
+                    self.showBackground(True)
+                    return
+
+                # Ako je URL (HTTP ili FTP) → skini ga u cache
+                if image_path.startswith("http") or image_path.startswith("ftp"):
                     try:
-                        filename = os.path.join(CACHE_DIR, os.path.basename(image_path.split("?")[0]))
+                        # Čišćenje naziva fajla od URL parametara
+                        base_name = os.path.basename(image_path.split("?")[0])
+                        filename = os.path.join(CACHE_DIR, base_name)
+
+                        # urllib.request će automatski koristiti kredencijale iz URL-a
                         urllib.request.urlretrieve(image_path, filename)
                         image_path = filename
                     except Exception as e:
-                        print("[Download error]:", e)
+                        print("[CiefpPicturePlayer] Download error:", e)
+                        self["preview"].hide()
+                        self.showBackground(True)
                         return
+
+                # Prikaz slike ako fajl postoji na disku (lokalno ili u cache-u)
                 if os.path.exists(image_path):
                     try:
                         self.showBackground(False)
-
                         self.picload.setPara((1160, 740, 1, 1, False, 1, "#00000000"))
                         self.picload.startDecode(image_path)
-
                         return
                     except Exception as e:
-                        print("[Preview error]:", e)
+                        print("[CiefpPicturePlayer] Preview error:", e)
 
+        # Ako ništa od gore navedenog ne prođe, sakrij preview i vrati pozadinu
         self["preview"].hide()
         self.showBackground(True)
 
     def onOk(self):
-        """Selektuj stavku (folder ili sliku)"""
         idx = self["content_list"].index
         if 0 <= idx < len(self.content_items):
             item = self.content_items[idx]
             if item["type"] == "folder":
                 self.loadFolderContent(item["path"])
+            elif item["type"] == "ftp_folder":  # DODATO
+                self.loadPhoneFTPContent(item["path"])
             elif item["type"] == "image":
                 self.viewFullscreen(item["path"], item["name"])
 
@@ -400,41 +484,55 @@ class CiefpPicturePlayer(Screen):
                 self.close()
 
             def displayImage(self):
+                checkAndClearCache() # DODATO
                 if 0 <= self.current_idx < len(self.image_list):
                     item = self.image_list[self.current_idx]
-                    path = item["path"]
-                    name = item["name"]
+                    path = item.get("path", "")
+                    name = item.get("name", "Unknown")
 
-                    # Prikaži naziv
                     self["filename"].setText(name)
 
                     try:
-                        # Ako je URL → download u cache
-                        if path.startswith("http"):
+                        if path.startswith("http") or path.startswith("ftp"):
                             try:
-                                filename = os.path.join(
-                                    CACHE_DIR,
-                                    os.path.basename(path.split("?")[0])
-                                )
+                                base_name = os.path.basename(path.split("?")[0])
+                                filename = os.path.join(CACHE_DIR, base_name)
 
-                                # Skini samo ako već ne postoji
                                 if not os.path.exists(filename):
-                                    urllib.request.urlretrieve(path, filename)
+                                    import urllib.request
 
+                                    # RUČNA PROVERA KEŠA (pošto self.getCacheSize ovde ne radi)
+                                    try:
+                                        total_size = 0
+                                        for f in os.listdir(CACHE_DIR):
+                                            fp = os.path.join(CACHE_DIR, f)
+                                            if os.path.isfile(fp):
+                                                total_size += os.path.getsize(fp)
+
+                                        if (total_size / (1024 * 1024)) > 500:
+                                            # RUČNO BRISANJE
+                                            for f in os.listdir(CACHE_DIR):
+                                                os.unlink(os.path.join(CACHE_DIR, f))
+                                    except:
+                                        pass
+
+                                    urllib.request.urlretrieve(path, filename)
                                 path = filename
 
                             except Exception as e:
-                                print("[Download error]:", e)
-                                self["filename"].setText("Download error")
+                                print("[Fullscreen Download Error]:", e)
+                                self["filename"].setText("Download error: " + name)
                                 return
 
-                        # Decode preko ePicLoad
-                        self.picload.setPara((1920, 1080, 1, 1, False, 1, "#00000000"))
-                        self.picload.startDecode(path)
+                        if os.path.exists(path):
+                            self.picload.setPara((1920, 1080, 1, 1, False, 1, "#00000000"))
+                            self.picload.startDecode(path)
+                        else:
+                            self["filename"].setText("File not found: " + name)
 
                     except Exception as e:
-                        self["filename"].setText("Cannot display: " + name)
-                        print("[Fullscreen] Error:", e)
+                        self["filename"].setText("Error: " + str(e))
+                        print("[Fullscreen] Critical Error:", e)
 
             def onPictureLoaded(self, picInfo=None):
                 ptr = self.picload.getData()
@@ -633,15 +731,15 @@ class CiefpPicturePlayer(Screen):
                 self.loadFolderContent(filepath)
     
     # === MREŽNI SADRŽAJ (kopirano iz CiefpVibes) ===
-    
     def openNetworkMenu(self):
         from Screens.ChoiceBox import ChoiceBox
-        
+
         self.session.openWithCallback(
             self.networkMenuSelected,
             ChoiceBox,
             title="Network Options",
             list=[
+                ("Connect to Phone (Android FTP)", "connect_phone_ftp"),  # DODATO
                 ("Connect to Laptop (SMB)", "connect_laptop"),
                 ("Browse Network Shares", "browse_network"),
                 ("Add Network Share", "add_share"),
@@ -649,12 +747,21 @@ class CiefpPicturePlayer(Screen):
                 ("Auto-Scan", "autoscan"),
             ]
         )
-    
+
     def networkMenuSelected(self, choice):
         if not choice:
             return
-        
-        if choice[1] == "connect_laptop":
+
+        if choice[1] == "connect_phone_ftp":
+            # Prvo unosimo IP adresu
+            self.session.openWithCallback(
+                self.phoneIPEntered,
+                VirtualKeyBoard,
+                title="Enter Phone IP Address",
+                text="192.168.1."
+            )
+
+        elif choice[1] == "connect_laptop":
             self.connectToLaptop()
         elif choice[1] == "browse_network":
             self.browseNetworkShares()
@@ -664,7 +771,130 @@ class CiefpPicturePlayer(Screen):
             self.disconnectNetwork()
         elif choice[1] == "autoscan":
             self.autoScanNetwork()
-    
+
+    def phoneIPEntered(self, ip_address):
+        if not ip_address: return
+        self.phone_ip = ip_address
+        self.session.openWithCallback(
+            self.phonePortEntered,
+            VirtualKeyBoard,
+            title="Enter FTP Port",
+            text="2121"
+        )
+
+    def phonePortEntered(self, port):
+        if not port: return
+        self.phone_port = port
+        self.session.openWithCallback(
+            self.phoneUserEntered,
+            VirtualKeyBoard,
+            title="Enter FTP Username (Leave empty for anonymous)",
+            text="root"
+        )
+
+    def phoneUserEntered(self, user):
+        # Ako je prazno, postavi na 'anonymous'
+        self.phone_user = user if user else "anonymous"
+        self.session.openWithCallback(
+            self.phonePassEntered,
+            VirtualKeyBoard,
+            title="Enter FTP Password",
+            text=""
+        )
+
+    def phonePassEntered(self, password):
+        self.phone_pass = password
+        # Sada imamo sve podatke, pokrećemo učitavanje
+        self.loadPhoneFTPContent("/")
+
+    def loadPhoneFTPContent(self, remote_path):
+        self["status"].setText("Connecting to {}:{}...".format(self.phone_ip, self.phone_port))
+        try:
+            from ftplib import FTP
+            ftp = FTP()
+            ftp.connect(self.phone_ip, int(self.phone_port), timeout=8)
+            ftp.login(self.phone_user, self.phone_pass)
+            ftp.set_pasv(True)
+            ftp.cwd(remote_path)
+
+            self.current_path = remote_path
+            self.content_items = []
+            image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+
+            # Logika za povratak nazad (Up) - MORA biti prvi u self.content_items
+            if remote_path != "/":
+                parent = os.path.dirname(remote_path.rstrip('/')) or "/"
+                self.content_items.append({
+                    "name": ".. (Up)",
+                    "path": parent,
+                    "type": "ftp_folder",
+                    "info": ""
+                })
+
+            listing = []
+            ftp.retrlines('LIST', listing.append)
+
+            folders = []
+            images = []
+
+            for line in listing:
+                parts = line.split(None, 8)
+                if len(parts) < 9: continue
+                name = parts[8].strip()
+                if name in (".", ".."): continue
+
+                is_dir = parts[0].startswith('d')
+                # Ručno pravimo putanju da izbegnemo probleme sa os.path.join na FTP-u
+                if remote_path.endswith('/'):
+                    full_path = remote_path + name
+                else:
+                    full_path = remote_path + '/' + name
+
+                if is_dir:
+                    folders.append({
+                        "name": "[DIR] " + name,
+                        "path": full_path,
+                        "type": "ftp_folder",
+                        "info": ""
+                    })
+                else:
+                    ext = os.path.splitext(name)[1].lower()
+                    if ext in image_extensions:
+                        url = "ftp://{}:{}@{}:{}{}".format(
+                            self.phone_user,
+                            self.phone_pass,
+                            self.phone_ip,
+                            self.phone_port,
+                            full_path
+                        )
+                        images.append({
+                            "name": name,
+                            "path": url,
+                            "type": "image",
+                            "info": "Phone"
+                        })
+
+            # SORTIRANJE:
+            # Sortiramo foldere po imenu (bez [DIR] prefiksa u poređenju)
+            folders.sort(key=lambda x: str(x["name"]).lower())
+
+            # Sortiramo slike od najnovije ka starijoj (važno za IMG_YYYYMMDD...)
+            images.sort(key=lambda x: str(x["name"]), reverse=True)
+
+            # SPAJANJE:
+            # self.content_items već sadrži ".. (Up)" ako nismo u root-u
+            self.content_items.extend(folders)
+            self.content_items.extend(images)
+
+            self.updateContentList()
+            self.current_mode = "phone_ftp"
+            self["status"].setText("Phone FTP: " + remote_path)
+            ftp.quit()
+
+        except Exception as e:
+            self.session.open(MessageBox, "FTP Login Failed: " + str(e), MessageBox.TYPE_ERROR)
+            self["status"].setText("Connection Error")
+
     def connectToLaptop(self):
         from Screens.VirtualKeyBoard import VirtualKeyBoard
         
