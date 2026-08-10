@@ -34,7 +34,7 @@ from urllib.parse import unquote
 
 PLUGIN_NAME = "CiefpPicturePlayer"
 PLUGIN_DESC = "Picture viewer with local, network and online support"
-PLUGIN_VERSION = "1.1"
+PLUGIN_VERSION = "1.2"
 PLUGIN_DIR = os.path.dirname(__file__) or "/usr/lib/enigma2/python/Plugins/Extensions/CiefpPicturePlayer"
 
 # Mrežni mount point
@@ -77,11 +77,11 @@ class CiefpPicturePlayer(Screen):
     """Glavni ekran za pregled slika"""
 
     def buildSkin(self):
-        """Kreira skin sa background.png koji se može sakriti"""
+        """Kreira skin sa pictureplayer.png koji se može sakriti"""
 
         # Kreiraj screen bez background-a u skinu (dodaćemo ga programski)
         return '''<?xml version="1.0" encoding="utf-8"?>
-        <screen position="0,0" size="1920,1080" flags="wfNoBorder" backgroundColor="transparent">
+        <screen position="center,center" size="1920,1080" flags="wfNoBorder" backgroundColor="transparent">
             <eLabel position="0,0" size="1920,1080" backgroundColor="#0a1a3a" zPosition="-2"/>
 
             <eLabel position="0,0" size="640,1080" backgroundColor="#1a2a4a" zPosition="0"/>
@@ -156,6 +156,24 @@ class CiefpPicturePlayer(Screen):
 
         self.onLayoutFinish.append(self.loadLocalContent)
 
+    # =============================================
+    # NOVA METODA ZA PREUZIMANJE SA HEADERIMA
+    # =============================================
+    def download_with_headers(self, url, filename):
+        """Preuzima fajl sa User-Agent i Referer headerima"""
+        try:
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            req.add_header('Referer', 'https://spartacuswallpaper.com/')
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                with open(filename, 'wb') as out_file:
+                    out_file.write(response.read())
+            return True
+        except Exception as e:
+            print("[CiefpPicturePlayer] Download error:", e)
+            return False
+
     def updateTime(self):
         try:
             import time
@@ -164,7 +182,6 @@ class CiefpPicturePlayer(Screen):
         except:
             pass
 
-    # DODAJ OVO OVDE (POSLE updateTime, PRE up metode):
     def getCacheSize(self):
         """Vraća veličinu keš foldera u MB"""
         try:
@@ -259,7 +276,6 @@ class CiefpPicturePlayer(Screen):
         info += "📄 Files: {}\n".format(file_count)
         info += "💾 Size: {} MB\n\n".format(cache_size)
 
-        # DODATO UPOZORENJE
         if cache_size > 400:
             info += "⚠️ WARNING: Cache is getting full!\n"
             info += "Slideshow might freeze if memory runs out.\n\n"
@@ -285,8 +301,6 @@ class CiefpPicturePlayer(Screen):
     def languageSelected(self, choice):
         if choice:
             lang = choice[1]
-            # Ovde dodaj logiku za promenu jezika
-            # Za sada samo prikaži poruku
             self.session.open(MessageBox,
                               f"🌐 Language changed to: {choice[0]}\n\n(Full translation will be added later)",
                               MessageBox.TYPE_INFO, timeout=2)
@@ -306,12 +320,10 @@ class CiefpPicturePlayer(Screen):
 
     def themeSelected(self, choice):
         if choice:
-            # Ovde dodaj logiku za promenu teme
             self.session.open(MessageBox, f"🎨 Theme changed to: {choice[0]}\n\n(Restart plugin to apply changes)",
                               MessageBox.TYPE_INFO, timeout=2)
 
     def changeCacheLimit(self):
-        # Ručno definišemo listu opcija koju smo postavili u config-u
         cache_options = [
             ("0", "Disabled"),
             ("100", "100 MB"),
@@ -343,22 +355,19 @@ class CiefpPicturePlayer(Screen):
         self.preview_timer.start(300, True)
 
     def showBackground(self, show=True):
-        """Prikaže ili sakrije background.png"""
+        """Prikaže ili sakrije pictureplayer.png"""
         if self.background_widget is not None:
             if show:
                 self.background_widget.show()
             else:
                 self.background_widget.hide()
         else:
-            # Prvi put - kreiraj background widget
-            bg_path = os.path.join(PLUGIN_DIR, "backgrounds/background.png")
+            bg_path = os.path.join(PLUGIN_DIR, "backgrounds/pictureplayer.png")
             if os.path.exists(bg_path):
                 from enigma import ePixmap
                 from enigma import ePoint, eSize
-                # ePixmap zahteva parent - koristi self.instance
                 self.background_widget = ePixmap(self.instance)
                 self.background_widget.setPixmapFromFile(bg_path)
-                # Ispravka: move i resize primaju ePoint i eSize
                 self.background_widget.move(ePoint(640, 0))
                 self.background_widget.resize(eSize(1280, 1080))
                 self.background_widget.show()
@@ -370,10 +379,8 @@ class CiefpPicturePlayer(Screen):
     def hideBackgroundForPreview(self):
         """Sakrije background kada se prikazuje preview slike"""
         if self.content_items and len([i for i in self.content_items if i["type"] == "image"]) > 0:
-            # Ima slika u listi, sakrij background
             self.showBackground(False)
         else:
-            # Nema slika, prikaži background
             self.showBackground(True)
 
     def onPictureLoaded(self, picInfo=None):
@@ -383,15 +390,13 @@ class CiefpPicturePlayer(Screen):
             self["preview"].show()
 
     def updatePreview(self):
-        checkAndClearCache() # DODATO
+        checkAndClearCache()
         idx = self["content_list"].index
         if 0 <= idx < len(self.content_items):
             item = self.content_items[idx]
             if item["type"] == "image":
-                # Definisanje varijable na samom početku
                 image_path = item.get("path", "")
 
-                # Provera da li putanja uopšte postoji
                 if not image_path:
                     self["preview"].hide()
                     self.showBackground(True)
@@ -400,12 +405,15 @@ class CiefpPicturePlayer(Screen):
                 # Ako je URL (HTTP ili FTP) → skini ga u cache
                 if image_path.startswith("http") or image_path.startswith("ftp"):
                     try:
-                        # Čišćenje naziva fajla od URL parametara
                         base_name = os.path.basename(image_path.split("?")[0])
                         filename = os.path.join(CACHE_DIR, base_name)
 
-                        # urllib.request će automatski koristiti kredencijale iz URL-a
-                        urllib.request.urlretrieve(image_path, filename)
+                        # KORISTI NOVU METODU SA HEADERIMA
+                        if not self.download_with_headers(image_path, filename):
+                            self["preview"].hide()
+                            self.showBackground(True)
+                            return
+
                         image_path = filename
                     except Exception as e:
                         print("[CiefpPicturePlayer] Download error:", e)
@@ -423,7 +431,6 @@ class CiefpPicturePlayer(Screen):
                     except Exception as e:
                         print("[CiefpPicturePlayer] Preview error:", e)
 
-        # Ako ništa od gore navedenog ne prođe, sakrij preview i vrati pozadinu
         self["preview"].hide()
         self.showBackground(True)
 
@@ -433,7 +440,7 @@ class CiefpPicturePlayer(Screen):
             item = self.content_items[idx]
             if item["type"] == "folder":
                 self.loadFolderContent(item["path"])
-            elif item["type"] == "ftp_folder":  # DODATO
+            elif item["type"] == "ftp_folder":
                 self.loadPhoneFTPContent(item["path"])
             elif item["type"] == "image":
                 self.viewFullscreen(item["path"], item["name"])
@@ -443,11 +450,12 @@ class CiefpPicturePlayer(Screen):
         from Screens.Screen import Screen
 
         class FullscreenViewer(Screen):
-            def __init__(self, session, image_list, current_idx):
+            def __init__(self, session, image_list, current_idx, parent_instance):
                 Screen.__init__(self, session)
                 self.session = session
                 self.image_list = image_list
                 self.current_idx = current_idx
+                self.parent_instance = parent_instance  # Referenca na glavni plugin
                 self.slideshow_active = False
                 self.slideshow_timer = eTimer()
                 self.slideshow_timer.callback.append(self.nextImage)
@@ -456,8 +464,7 @@ class CiefpPicturePlayer(Screen):
 
                 self.skin = '''
                 <screen position="0,0" size="1920,1080" flags="wfNoBorder" backgroundColor="black">
-                    <!-- Centriranje slike -->
-                    <widget name="image" position="0,0" size="1920,1080" alphatest="on" scale="aspect"/>
+                    <widget name="image" position="center,center" size="1920,1080" alphatest="on" scale="aspect"/>
                     <widget name="filename" position="60,980" size="1800,50" font="Regular;32" foregroundColor="#ffffff" transparent="1" halign="center"/>
                     <widget name="key_red" position="60,1030" size="260,50" font="Regular;30" foregroundColor="#ff5555" transparent="1"/>
                     <widget name="key_green" position="350,1030" size="260,50" font="Regular;30" foregroundColor="#55ff55" transparent="1"/>
@@ -480,11 +487,29 @@ class CiefpPicturePlayer(Screen):
 
                 self.onLayoutFinish.append(self.displayImage)
 
+            # =============================================
+            # KOPIRANA METODA ZA PREUZIMANJE SA HEADERIMA
+            # =============================================
+            def download_with_headers(self, url, filename):
+                """Preuzima fajl sa User-Agent i Referer headerima"""
+                try:
+                    req = urllib.request.Request(url)
+                    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+                    req.add_header('Referer', 'https://spartacuswallpaper.com/')
+                    
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        with open(filename, 'wb') as out_file:
+                            out_file.write(response.read())
+                    return True
+                except Exception as e:
+                    print("[Fullscreen Download Error]:", e)
+                    return False
+
             def goBack(self):
                 self.close()
 
             def displayImage(self):
-                checkAndClearCache() # DODATO
+                checkAndClearCache()
                 if 0 <= self.current_idx < len(self.image_list):
                     item = self.image_list[self.current_idx]
                     path = item.get("path", "")
@@ -499,9 +524,7 @@ class CiefpPicturePlayer(Screen):
                                 filename = os.path.join(CACHE_DIR, base_name)
 
                                 if not os.path.exists(filename):
-                                    import urllib.request
-
-                                    # RUČNA PROVERA KEŠA (pošto self.getCacheSize ovde ne radi)
+                                    # RUČNA PROVERA KEŠA
                                     try:
                                         total_size = 0
                                         for f in os.listdir(CACHE_DIR):
@@ -510,13 +533,16 @@ class CiefpPicturePlayer(Screen):
                                                 total_size += os.path.getsize(fp)
 
                                         if (total_size / (1024 * 1024)) > 500:
-                                            # RUČNO BRISANJE
                                             for f in os.listdir(CACHE_DIR):
                                                 os.unlink(os.path.join(CACHE_DIR, f))
                                     except:
                                         pass
 
-                                    urllib.request.urlretrieve(path, filename)
+                                    # KORISTI NOVU METODU SA HEADERIMA
+                                    if not self.download_with_headers(path, filename):
+                                        self["filename"].setText("Download error: " + name)
+                                        return
+
                                 path = filename
 
                             except Exception as e:
@@ -567,6 +593,13 @@ class CiefpPicturePlayer(Screen):
                 if 0 <= self.current_idx < len(self.image_list):
                     path = self.image_list[self.current_idx]["path"]
                     try:
+                        # Ako je URL, proveri da li je u kešu
+                        if path.startswith("http") or path.startswith("ftp"):
+                            base_name = os.path.basename(path.split("?")[0])
+                            cache_path = os.path.join(CACHE_DIR, base_name)
+                            if os.path.exists(cache_path):
+                                path = cache_path
+                        
                         size = os.path.getsize(path)
                         size_mb = size / (1024 * 1024)
                         self.session.open(MessageBox,
@@ -585,7 +618,7 @@ class CiefpPicturePlayer(Screen):
                 break
 
         if images:
-            self.session.open(FullscreenViewer, images, current_idx)
+            self.session.open(FullscreenViewer, images, current_idx, self)
 
     # === LOKALNI SADRŽAJ (kao u CiefpVibes) ===
     
@@ -603,10 +636,8 @@ class CiefpPicturePlayer(Screen):
         self.current_path = folder_path
         self.content_items = []
 
-        # Lista ekstenzija - samo mala slova
         image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
-        # Parent folder
         if folder_path != "/":
             parent = os.path.dirname(folder_path.rstrip('/'))
             if not parent:
@@ -636,7 +667,6 @@ class CiefpPicturePlayer(Screen):
                         "info": ""
                     })
                 else:
-                    # KLJUČNA RAZLIKA: koristi os.path.splitext
                     ext = os.path.splitext(item)[1].lower().strip()
                     if ext in image_extensions:
                         try:
@@ -650,7 +680,7 @@ class CiefpPicturePlayer(Screen):
                             info = ""
 
                         images.append({
-                            "name": item,  # Originalno ime (zadržava velika slova)
+                            "name": item,
                             "path": full_path,
                             "type": "image",
                             "info": info
@@ -669,7 +699,6 @@ class CiefpPicturePlayer(Screen):
             self["status"].setText("Error reading folder")
 
     def updateContentList(self):
-        print("[DEBUG] updateContentList called, items:", len(self.content_items))
         list_data = []
         for item in self.content_items:
             if item["info"]:
@@ -677,9 +706,7 @@ class CiefpPicturePlayer(Screen):
             else:
                 display = item["name"]
             list_data.append(display)
-            print("[DEBUG] Adding to list:", display)  # DODAJ OVO
 
-        print("[DEBUG] Setting list with", len(list_data), "items")
         self["content_list"].setList(list_data)
 
     def openFileBrowser(self):
@@ -739,7 +766,7 @@ class CiefpPicturePlayer(Screen):
             ChoiceBox,
             title="Network Options",
             list=[
-                ("Connect to Phone (Android FTP)", "connect_phone_ftp"),  # DODATO
+                ("Connect to Phone (Android FTP)", "connect_phone_ftp"),
                 ("Connect to Laptop (SMB)", "connect_laptop"),
                 ("Browse Network Shares", "browse_network"),
                 ("Add Network Share", "add_share"),
@@ -753,7 +780,6 @@ class CiefpPicturePlayer(Screen):
             return
 
         if choice[1] == "connect_phone_ftp":
-            # Prvo unosimo IP adresu
             self.session.openWithCallback(
                 self.phoneIPEntered,
                 VirtualKeyBoard,
@@ -793,7 +819,6 @@ class CiefpPicturePlayer(Screen):
         )
 
     def phoneUserEntered(self, user):
-        # Ako je prazno, postavi na 'anonymous'
         self.phone_user = user if user else "anonymous"
         self.session.openWithCallback(
             self.phonePassEntered,
@@ -804,7 +829,6 @@ class CiefpPicturePlayer(Screen):
 
     def phonePassEntered(self, password):
         self.phone_pass = password
-        # Sada imamo sve podatke, pokrećemo učitavanje
         self.loadPhoneFTPContent("/")
 
     def loadPhoneFTPContent(self, remote_path):
@@ -821,7 +845,6 @@ class CiefpPicturePlayer(Screen):
             self.content_items = []
             image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
-            # Logika za povratak nazad (Up) - MORA biti prvi u self.content_items
             if remote_path != "/":
                 parent = os.path.dirname(remote_path.rstrip('/')) or "/"
                 self.content_items.append({
@@ -844,7 +867,6 @@ class CiefpPicturePlayer(Screen):
                 if name in (".", ".."): continue
 
                 is_dir = parts[0].startswith('d')
-                # Ručno pravimo putanju da izbegnemo probleme sa os.path.join na FTP-u
                 if remote_path.endswith('/'):
                     full_path = remote_path + name
                 else:
@@ -874,15 +896,9 @@ class CiefpPicturePlayer(Screen):
                             "info": "Phone"
                         })
 
-            # SORTIRANJE:
-            # Sortiramo foldere po imenu (bez [DIR] prefiksa u poređenju)
             folders.sort(key=lambda x: str(x["name"]).lower())
-
-            # Sortiramo slike od najnovije ka starijoj (važno za IMG_YYYYMMDD...)
             images.sort(key=lambda x: str(x["name"]), reverse=True)
 
-            # SPAJANJE:
-            # self.content_items već sadrži ".. (Up)" ako nismo u root-u
             self.content_items.extend(folders)
             self.content_items.extend(images)
 
@@ -928,7 +944,6 @@ class CiefpPicturePlayer(Screen):
         self["status"].setText("Connecting to {}...".format(ip_address))
 
         if self.mountSMBShare(smb_path, mount_point):
-            # Prikaži poruku
             msg = self.session.open(MessageBox, "Successfully connected!", MessageBox.TYPE_INFO, timeout=3)
             self.loadFolderContent(mount_point)
         else:
@@ -1150,7 +1165,6 @@ class CiefpPicturePlayer(Screen):
                                 clean = clean[12:]
                             clean = clean.replace(".tv", "").replace(".radio", "")
                             clean = clean.replace("_", " ").strip()
-                            # Capitalize
                             words = [w.capitalize() for w in clean.split()]
                             display = " ".join(words)
                             items.append((display, dl_url, name))
@@ -1172,7 +1186,6 @@ class CiefpPicturePlayer(Screen):
             urllib.request.urlretrieve(dl_url, tmp_path)
             print("[CiefpPicturePlayer] Downloaded:", filename)
             
-            # Parsiraj .tv fajl i prikaži slike u listi
             self.loadImagesFromBouquet(tmp_path, display_name)
             
         except Exception as e:
@@ -1213,14 +1226,13 @@ class CiefpPicturePlayer(Screen):
 
                         name = name or "Unknown"
 
-                        # Provera ekstenzije (case-insensitive)
                         ext = os.path.splitext(url.split('?')[0])[1].lower().strip() if '?' not in url else \
                         os.path.splitext(url.split('?')[0])[1].lower()
                         image_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
                         if ext in image_extensions:
                             self.content_items.append({
-                                "name": name,  # Zadržava originalni naziv
+                                "name": name,
                                 "path": url,
                                 "type": "image",
                                 "info": "Online"
@@ -1236,7 +1248,6 @@ class CiefpPicturePlayer(Screen):
             self["status"].setText("Online: {} images from {}".format(image_count, display_name))
             self.current_mode = "online"
 
-            # Prikaži prvu sliku ako postoji
             if image_count > 0:
                 self["content_list"].index = 0
                 self.updatePreview()
