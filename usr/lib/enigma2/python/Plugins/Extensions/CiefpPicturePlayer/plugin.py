@@ -34,7 +34,7 @@ from urllib.parse import unquote
 
 PLUGIN_NAME = "CiefpPicturePlayer"
 PLUGIN_DESC = "Picture viewer with local, network and online support"
-PLUGIN_VERSION = "1.2"
+PLUGIN_VERSION = "1.3"
 PLUGIN_DIR = os.path.dirname(__file__) or "/usr/lib/enigma2/python/Plugins/Extensions/CiefpPicturePlayer"
 
 # Mrežni mount point
@@ -78,11 +78,12 @@ class CiefpPicturePlayer(Screen):
 
     def buildSkin(self):
         """Kreira skin sa pictureplayer.png koji se može sakriti"""
-
-        # Kreiraj screen bez background-a u skinu (dodaćemo ga programski)
         return '''<?xml version="1.0" encoding="utf-8"?>
         <screen position="center,center" size="1920,1080" flags="wfNoBorder" backgroundColor="transparent">
             <eLabel position="0,0" size="1920,1080" backgroundColor="#0a1a3a" zPosition="-2"/>
+
+            <!-- Background slika sluzi kao pozadina sa desne strane -->
+            <widget name="bg_picture" position="640,0" size="1280,1080" alphatest="blend" zPosition="1" scale="aspect"/>
 
             <eLabel position="0,0" size="640,1080" backgroundColor="#1a2a4a" zPosition="0"/>
 
@@ -107,14 +108,20 @@ class CiefpPicturePlayer(Screen):
         Screen.__init__(self, session)
         self.session = session
 
-        # Postavi skin
         self.skin = self.buildSkin()
+
+        # Picload za preview slika
         self.picload = ePicLoad()
         self.picload.PictureData.get().append(self.onPictureLoaded)
+
+        # POSEBAN Picload za pozadinu
+        self.bg_picload = ePicLoad()
+        self.bg_picload.PictureData.get().append(self.onBgLoaded)
 
         # Widgeti
         self["content_list"] = List([])
         self["preview"] = Pixmap()
+        self["bg_picture"] = Pixmap()  # Widget za pozadinu
         self["status"] = Label("CiefpPicturePlayer v" + PLUGIN_VERSION)
         self["time"] = Label("")
         self["key_red"] = Label("EXIT")
@@ -122,8 +129,6 @@ class CiefpPicturePlayer(Screen):
         self["key_yellow"] = Label("NETWORK")
         self["key_blue"] = Label("ONLINE")
         self["key_menu"] = Label("MENU")
-
-        self.background_widget = None  # Referenca na background widget
 
         # Podaci
         self.content_items = []
@@ -133,15 +138,12 @@ class CiefpPicturePlayer(Screen):
         self.preview_timer.callback.append(self.updatePreview)
         self.preview_timer.start(300, False)
 
-        # Time update
         self.time_timer = eTimer()
         self.time_timer.callback.append(self.updateTime)
         self.time_timer.start(1000)
 
-        # Kontejner za komande
         self.container = eConsoleAppContainer()
 
-        # Akcije
         self["actions"] = ActionMap(["ColorActions", "WizardActions", "DirectionActions", "MenuActions"], {
             "ok": self.onOk,
             "back": self.exit,
@@ -154,11 +156,48 @@ class CiefpPicturePlayer(Screen):
             "menu": self.openSettings,
         }, -1)
 
+        # Učitavamo pozadinu i sadržaj pri pokretanju
+        self.onLayoutFinish.append(self.loadBackground)
         self.onLayoutFinish.append(self.loadLocalContent)
 
     # =============================================
     # NOVA METODA ZA PREUZIMANJE SA HEADERIMA
     # =============================================
+    def loadBackground(self):
+        """Učitava i dekodira background sliku preko ePicLoad-a"""
+        # Proveravamo više sigurnih putanja do slike
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), "backgrounds/pictureplayer.png"),
+            "/usr/lib/enigma2/python/Plugins/Extensions/CiefpPicturePlayer/backgrounds/pictureplayer.png"
+        ]
+
+        bg_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                bg_path = p
+                break
+
+        if bg_path:
+            # Postavljamo parametre dekodiranja za pozadinu (dimenzije 1280x1080)
+            self.bg_picload.setPara((1280, 1080, 1, 1, False, 1, "#00000000"))
+            self.bg_picload.startDecode(bg_path)
+        else:
+            print("[CiefpPicturePlayer] ERROR: Background image missing!")
+
+    def onBgLoaded(self, picInfo=None):
+        """Callback koji postavlja dekodiranu pozadinsku sliku u widget"""
+        ptr = self.bg_picload.getData()
+        if ptr is not None:
+            self["bg_picture"].instance.setPixmap(ptr)
+            self["bg_picture"].show()
+
+    def showBackground(self, show=True):
+        """Prikaže ili sakrije pictureplayer.png"""
+        if show:
+            self["bg_picture"].show()
+        else:
+            self["bg_picture"].hide()
+            
     def download_with_headers(self, url, filename):
         """Preuzima fajl sa User-Agent i Referer headerima"""
         try:
@@ -354,23 +393,18 @@ class CiefpPicturePlayer(Screen):
         self["content_list"].selectNext()
         self.preview_timer.start(300, True)
 
+    def initBackground(self):
+        """Učitava background sliku u bg_picture widget"""
+        bg_path = os.path.join(PLUGIN_DIR, "backgrounds/pictureplayer.png")
+        if os.path.exists(bg_path):
+            self["bg_picture"].instance.setPixmapFromFile(bg_path)
+
     def showBackground(self, show=True):
         """Prikaže ili sakrije pictureplayer.png"""
-        if self.background_widget is not None:
-            if show:
-                self.background_widget.show()
-            else:
-                self.background_widget.hide()
+        if show:
+            self["bg_picture"].show()
         else:
-            bg_path = os.path.join(PLUGIN_DIR, "backgrounds/pictureplayer.png")
-            if os.path.exists(bg_path):
-                from enigma import ePixmap
-                from enigma import ePoint, eSize
-                self.background_widget = ePixmap(self.instance)
-                self.background_widget.setPixmapFromFile(bg_path)
-                self.background_widget.move(ePoint(640, 0))
-                self.background_widget.resize(eSize(1280, 1080))
-                self.background_widget.show()
+            self["bg_picture"].hide()
 
     def showDefaultBackground(self):
         """Prikaže default pozadinu (tamno plavu) kada nema slike"""
